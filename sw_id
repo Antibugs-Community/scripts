@@ -1,1 +1,135 @@
+#!/system/bin/sh
+VERSION="1.1.4"
 
+ANDROID_ID_ORIGINAL=0
+ANDROID_ID=0
+BASEDIR=$(dirname $0)
+[ "_${BASEDIR}_" == "__" ] && BASEDIR="."
+WHOAMI=$(whoami)
+SPL="------------------------"
+echo "${SPL}\nSwitch ID Script v${VERSION}\n${SPL}"
+
+[ "${WHOAMI}" != "shell" -a "${WHOAMI}" != "root" ] && {
+ echo "Access denied: ${WHOAMI}"
+ exit
+}
+ANDROID_ID=$(settings get secure android_id)
+[ -f ${BASEDIR}/id ] && ANDROID_ID_ORIGINAL=$(cat ${BASEDIR}/id) || {
+ ANDROID_ID_ORIGINAL=${ANDROID_ID}
+ echo ${ANDROID_ID} > ${BASEDIR}/id
+}
+[ ! -d ${BASEDIR}/gen ] && mkdir -p ${BASEDIR}/gen
+[ ! -d ${BASEDIR}/accounts ] && mkdir -p ${BASEDIR}/accounts
+
+is_empty() {
+ [ "_$1_" == "__" ] && return 0
+ return 1
+}
+
+load() {
+ is_empty $1 && {
+  echo "Parameter is empty. Operation was canceled"
+  return 1
+ } 
+ [ -f $1 ] && {
+  echo "Loading '$1'..."
+  ANDROID_ID=
+  source $1
+  [ "_${ANDROID_ID}_" != "__" ] && {
+   [ ${#ANDROID_ID} -lt 16 ] && echo "Warning: Android ID is bad (${#ANDROID_ID} != 16)"
+   echo "Applying new Android ID: '${ANDROID_ID}'"
+   settings put secure android_id ${ANDROID_ID}
+   return 0
+  }
+  echo "Field 'ANDROID_ID' is not defined or empty. Operation was canceled"
+ } || echo "File '$1' not found. Operarion canceled"
+ return 1
+}
+
+generate() {
+ ANDROID_ID=$(date | md5sum -b | cut -c 16-32)
+ echo "Generated new Android ID: '${ANDROID_ID}'"
+ echo "ANDROID_ID=${ANDROID_ID}" > ${BASEDIR}/gen/${ANDROID_ID}
+ load ${BASEDIR}/gen/${ANDROID_ID}
+ return 0
+}
+
+restore() {
+ echo "Restoring original Android ID: '${ANDROID_ID_ORIGINAL}'"
+ [ "{ANDROID_ID_ORIGINAL}" != "${ANDROID_ID}" ] && settings put secure android_id ${ANDROID_ID_ORIGINAL}
+ return 0
+}
+
+clear() {
+ is_empty $1 && {
+  echo "Parameter is empty. Operation was canceled"
+  return 1
+ }
+ pkg_arr=($(pm list packages | grep $1))
+ pkg_cnt=${#pkg_arr[@]}
+ [ $pkg_cnt -eq 0 ] && {
+  echo "Package not found. Operation was canceled"
+  return 1
+ }
+ [ $pkg_cnt -eq 1 ] && {
+  pkg=$(echo ${pkg_arr[0]} | cut -d ':' -f 2)
+  echo "Detected package: '${pkg}'"
+  pm clear ${pkg}
+  return 0
+ }
+ echo "Detected ${pkg_cnt} packages. Operation was canceled"
+ return 1
+}
+
+enum() {
+ is_empty $1 && {
+  echo "Package name is not set. Operation was canceled"
+  return 1
+ }
+ echo "Staring accounts enumeration..."
+ for acc in $(find ${BASEDIR}/accounts/); do
+  [ -f $acc ] && {
+   clear $1 || return 1;
+   load $acc || return 1;
+   echo "Press 'Enter' to continue...";
+   read;
+  }
+ done
+ echo "Enumeration finished"
+ restore
+ clear $1 || return 1
+ return 0
+}
+
+
+echo "Base Dir: ${BASEDIR}"
+echo "Android ID (original): '${ANDROID_ID_ORIGINAL}'"
+echo "Android ID (current): '${ANDROID_ID}'"
+echo "${SPL}"
+
+usage() {
+ echo "Usage: $0 <command> <param>"
+ echo "\n"
+ echo "Commands:"
+ echo "load <file> - Load config file"
+ echo "generate - Generate new Android ID"
+ echo "clear <package> - Clear cache and data for package"
+ echo "restore - Restore original Android ID"
+ echo "enum <package> - Enumerate accounts"
+}
+
+
+case $1 in
+load) load $2 || usage
+;;
+generate) generate || usage
+;;
+restore) restore || usage
+;;
+clear) clear $2 || usage
+;;
+enum) enum $2 || usage
+;;
+*) usage
+;;
+esac
